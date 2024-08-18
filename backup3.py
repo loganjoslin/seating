@@ -1,10 +1,9 @@
 from time import time
-from math import floor
 import sys
 
 FRONT_ROWS = 1
-TIMEOUT = 1
-PARTNER_LIMIT = 4
+TIMEOUT = 300
+PARTNER_LIMIT = 2
 
 # weight of each list when organizing
 COMP_R_POINTS = 2
@@ -29,15 +28,12 @@ height = 5
 
 def main():
 
-    # prepare
     find_possible_positions()
     load_names()
     verify_dimensions()
     fetch_preferences()
     sort_names()
-    address_comp_strings(width)
 
-    # find solution
     start_time = time()
     while True:
         assignments.clear()
@@ -52,9 +48,18 @@ def main():
         else:
             break
 
-    # print solution
     print_class()
-    print_summary(start_time)
+
+    print(f"Compatibles: {len(c)}")
+    print(f"Incompatibles {len(i)}")
+    print(f"Fronts: {len(f)}")
+    print(f"Removed: {len(removed)}")
+    print(f"Total time: {time() - start_time}s")
+    print()
+    print(f"Compatibles: {c}")
+    print(f"Incompatibles {i}")
+    print(f"Fronts: {f}")
+    print(f"Removed: {removed}")
 
 def verify_dimensions():
     if len(names) > height * width:
@@ -66,7 +71,7 @@ def find_solution(n, timer):
 
     global timeout
 
-    # Solved layout, ie: positioned every student; return True.
+    # Positioned every student; return True.
     if n == len(names):
         timeout = False
         return True
@@ -113,24 +118,24 @@ def identify_possible_positions(student):
             if s in assignments:
                 if are_within_3x3(pos, assignments[s]):
                     to_remove.add(pos)
-                    blame(student, "I")
+                    blame(student, "i")
 
         # " may need to be restricted to front of class
         if student in f and pos[1] >= FRONT_ROWS:
                 to_remove.add(pos)
-                blame(student, "F")
+                blame(student, "f")
 
         # check if this position is "adjacent to" all currently assigned compatible partners
         for partner in comp_partners:
                 if partner in assignments:
                     if not are_adjacent_x(pos, assignments[partner]):
                         to_remove.add(pos)
-                        blame(student, "C")
+                        blame(student, "c")
 
         # check if student is blocked from his compatible partners
         if is_trapped_x(student, pos):
             to_remove.add(pos)
-            blame(student, "C")
+            blame(student, "c")
 
         # check if his neighboors WOULD BE blocked from THEIR compatible partners
         adjacent_positions = get_adjacent_positions_x(pos)
@@ -140,7 +145,7 @@ def identify_possible_positions(student):
                 name = get_key(p, assignments)
                 if is_trapped_x(name, p) and pos not in to_remove:
                     to_remove.add(pos)
-                    blame(student, "C")
+                    blame(student, "c")
         del assignments[student]
 
         # number of f students cannot exceed number of frontbound positions
@@ -160,64 +165,6 @@ def identify_possible_positions(student):
     
     return possible_positions
 
-# eliminates comp strings of inputted length or longer
-## a comp string is a set of compatible pairs that form a "string" which can be difficult or impossible to position
-def address_comp_strings(length):
-    while True:
-        restart = False
-        for pair in c:
-            for s in pair:
-                max_length = width * height + 1
-                # start at max length, and iterate down until string found
-                for i in range(max_length):
-                    if max_length - i < length - 1:
-                        break
-                    if string := find_string(s, None, 0, s, max_length - i):
-                        break
-                if string:
-                    print(f"Comp string or loop: {string}")
-                    sever_comp_string(string)
-                    restart = True
-                    break
-            if restart:
-                break
-        if not restart:
-            break
-
-# cuts string once found
-def sever_comp_string(string):
-    global c
-    s1 = string[floor(len(string) / 2) - 1]
-    s2 = string[floor(len(string) / 2)]
-    for pair in [(s1,s2),(s2,s1)]:
-        if pair in c:
-            c.remove(pair)
-            removed.append(pair)
-            print(f"Removed: {pair}\n")
-            break
-
-
-# Identifies string of given length, else returns None
-def find_string(current, previous, n, start, length):
-
-    if n == length:
-        return [current]
-    
-    # loop found
-    if n > 0 and current == start:
-        print("loop detected")
-        return [current]
-    
-    partners = c_partners(current)
-    if previous:
-        partners.remove(previous)
-
-    for next in partners:
-        string = find_string(next, current, n + 1, start, length)
-        if string:
-            return [current] + string
-    return None
-
 # returns true if a student with compatible partners is surrounded by non-compatible students
 def is_trapped_x(student, position):
     partners = c_partners(student)
@@ -234,6 +181,7 @@ def is_trapped_x(student, position):
     if count > 0:
         return True
     return False
+
 
 # returns all students who are compatible with input
 def c_partners(student):
@@ -303,23 +251,21 @@ def neglect_problematic_preference():
         if tally[s] > max:
             max = tally[s]
             blamed = s
-    if blamed[1] == "C":
-        for j in range(2):
-            for pair in c:
-                if pair[j] == blamed[0]:
-                    c.remove(pair)
-                    return ("C", pair)
-    elif blamed[1] == "I":
-        for j in range(2):
-            for pair in i:
-                if pair[j] == blamed[0]:
-                    i.remove(pair)
-                    return ("I", pair)
-    elif blamed[1] == "F":
-            for stdnt in f:
-                if stdnt == blamed[0]:
-                    f.remove(stdnt)
-                    return ("F", stdnt)
+    # compatibles are most likely to cause problems
+    for pair in c:
+        if blamed in pair:
+            c.remove(pair)
+            return ("C", pair)
+    # fronts
+    for stdnt in f:
+        if stdnt == blamed:
+            f.remove(stdnt)
+            return ("F", stdnt)
+    # incompatibles
+    for pair in i:
+        if blamed in pair:
+            i.remove(pair)
+            return ("I", pair)
 
 def sort_names():
     global names
@@ -348,7 +294,7 @@ def sort_names():
 def blame(student, lst):
     try:
         tally[(student, lst)] += 1
-    except KeyError:
+    except ValueError:
         tally[(student, lst)] = 0
 
 def get_key(value, dictionary):
@@ -393,9 +339,7 @@ def fetch_preferences():
                 lst.append(pair)
     print("Fronts")
     while (s := input("S: ")) != '':
-        if s in f:
-            print("Already in list.")
-        elif s in names:
+        if s in names:
             f.append(s) if len(f) < FRONT_ROWS * width else print("Front limit reached.")
         else:
             print("Student not in class")
@@ -415,18 +359,4 @@ def print_class():
                     output.write("# ")
             output.write("\n")
 
-def print_summary(start_time):
-    print(f"""
-Compatibles: {c}
-Incompatibles: {i}
-Fronts: {f}
-Removed: {removed}
-
-{len(c)} Compatibles
-{len(i)} Incompatibles
-{len(f)} Fronts
-{len(removed)} Removed
-Total time: {time() - start_time}
-""")
-    
 main()
