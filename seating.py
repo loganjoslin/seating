@@ -3,7 +3,8 @@ from math import floor
 import sys
 
 FRONT_ROWS = 1
-TIMEOUT = 1
+RELEGATED_FRONT_ROWS = 2
+TIMEOUT = 10
 PARTNER_LIMIT = 4
 
 # weight of each list when organizing
@@ -23,9 +24,13 @@ c = []
 i = []
 f = []
 
+# relegated compatibles, fronts
+rc = []
+rf = []
+
 # class dimensions
 width = 6
-height = 5
+height = 4
 
 def main():
 
@@ -45,10 +50,10 @@ def main():
         timer = time()
         if not find_solution(0, timer):
             print("Impossible request.\nNeglecting most problematic user preference.")
-            removed.append(neglect_problematic_preference())
+            neglect_problematic_preference()
         elif timeout:
             print("Timeout")
-            removed.append(neglect_problematic_preference())
+            neglect_problematic_preference()
         else:
             break
 
@@ -99,8 +104,12 @@ def identify_possible_positions(student):
     for s in comp_partners:
         if s in assignments:
             adjacent_x = get_adjacent_positions_x(assignments[s])
-            for pos in adjacent_x:    
-                restricted_to.add(pos)
+            restricted_to |= adjacent_x
+    rcomp_partners = rc_partners(student)
+    for s in rcomp_partners:
+        if s in assignments:
+            adjacent = get_adjacent_positions(assignments[s])
+            restricted_to |= adjacent
     if restricted_to:
         possible_positions = possible_positions & restricted_to
 
@@ -117,8 +126,11 @@ def identify_possible_positions(student):
 
         # " may need to be restricted to front of class
         if student in f and pos[1] >= FRONT_ROWS:
-                to_remove.add(pos)
-                blame(student, "F")
+            to_remove.add(pos)
+            blame(student, "F")
+        elif student in rf and pos[1] >= RELEGATED_FRONT_ROWS:
+            to_remove.add(pos)
+            blame(student, "RF")
 
         # check if this position is "adjacent to" all currently assigned compatible partners
         for partner in comp_partners:
@@ -127,20 +139,37 @@ def identify_possible_positions(student):
                         to_remove.add(pos)
                         blame(student, "C")
 
+        ## Trap checks ##
         # check if student is blocked from his compatible partners
         if is_trapped_x(student, pos):
             to_remove.add(pos)
             blame(student, "C")
 
         # check if his neighboors WOULD BE blocked from THEIR compatible partners
-        adjacent_positions = get_adjacent_positions_x(pos)
+        adjacent_positions_x = get_adjacent_positions_x(pos)
         assignments[student] = pos
-        for p in adjacent_positions:
+        for p in adjacent_positions_x:
             if p in assignments.values():
                 name = get_key(p, assignments)
                 if is_trapped_x(name, p) and pos not in to_remove:
                     to_remove.add(pos)
                     blame(student, "C")
+        del assignments[student]
+
+        # same as above, but less "restrictive". This uses the "relegated compatibles" list which allows
+        # for partners to be positioned above/below the student rather than just beside the student.
+        if is_trapped(student, pos) and pos not in to_remove:
+            to_remove.add(pos)
+            blame(student, "RC")
+
+        adjacent_positions = get_adjacent_positions(pos)
+        assignments[student] = pos
+        for p in adjacent_positions:
+            if p in assignments.values():
+                name = get_key(p, assignments)
+                if is_trapped(name, p) and pos not in to_remove:
+                    to_remove.add(pos)
+                    blame(student, "RC")
         del assignments[student]
 
         # number of f students cannot exceed number of frontbound positions
@@ -235,10 +264,36 @@ def is_trapped_x(student, position):
         return True
     return False
 
+# same as "is_trapped_x", but checks all adjacent positions -- not just left and right
+# this also assumes that the student is part of the "relegated compatibles list"
+def is_trapped(student, position):
+    partners = rc_partners(student)
+    if (count := len(partners)) == 0:
+        return False
+    adjacent_positions = get_adjacent_positions(position)
+    for pos in adjacent_positions:
+        if pos in assignments.values():
+            name = get_key(pos, assignments)
+            if name in partners:
+                count -= 1
+        else:
+            count -= 1
+    if count > 0:
+        return True
+    return False
+
 # returns all students who are compatible with input
 def c_partners(student):
     partners = []
     for pair in c:
+        for n3 in range(2):
+            if pair[n3%2] == student:
+                partners.append(pair[(n3+1)%2])
+    return partners
+
+def rc_partners(student):
+    partners = []
+    for pair in rc:
         for n3 in range(2):
             if pair[n3%2] == student:
                 partners.append(pair[(n3+1)%2])
@@ -254,22 +309,22 @@ def i_partners(student):
     return partners
 
 def get_adjacent_positions(position):
-    positions = [(position[0] + 1, position[1]), (position[0], position[1] + 1), 
-                 (position[0] - 1, position[1]), (position[0], position[1] - 1)]
-    to_remove = []
+    positions = {(position[0] + 1, position[1]), (position[0], position[1] + 1), 
+                 (position[0] - 1, position[1]), (position[0], position[1] - 1)}
+    to_remove = set( )
     for pos in positions:
         if pos[0] < 0 or pos[0] >= width or pos[1] < 0 or pos[1] >= height:
-            to_remove.append(pos)
+            to_remove.add(pos)
     for pos in to_remove:
         positions.remove(pos)
     return positions
 
 def get_adjacent_positions_x(position):
-    positions = [(position[0] + 1, position[1]), (position[0] - 1, position[1])]
-    to_remove = []
+    positions = {(position[0] + 1, position[1]), (position[0] - 1, position[1])}
+    to_remove = set()
     for pos in positions:
         if pos[0] < 0 or pos[0] >= width:
-            to_remove.append(pos)
+            to_remove.add(pos)
     for pos in to_remove:
         positions.remove(pos)
     return positions
@@ -295,7 +350,7 @@ def are_within_3x3(position, partner_position):
     return False
 
 def neglect_problematic_preference():
-    global c, i, f
+    global c, i, f, rc, rf
     # find student who cut the most branches
     max = 0
     blamed = next(iter(tally))
@@ -303,23 +358,32 @@ def neglect_problematic_preference():
         if tally[s] > max:
             max = tally[s]
             blamed = s
+
+    # relegate
     if blamed[1] == "C":
-        for j in range(2):
-            for pair in c:
-                if pair[j] == blamed[0]:
-                    c.remove(pair)
-                    return ("C", pair)
-    elif blamed[1] == "I":
-        for j in range(2):
-            for pair in i:
-                if pair[j] == blamed[0]:
-                    i.remove(pair)
-                    return ("I", pair)
+        for pair in c:
+            if blamed[0] in pair:
+                relegate(pair)
+
     elif blamed[1] == "F":
-            for stdnt in f:
-                if stdnt == blamed[0]:
-                    f.remove(stdnt)
-                    return ("F", stdnt)
+        relegate(blamed[0])
+    
+    # remove
+    elif blamed[1] == "I":
+        for pair in i:
+            if blamed[0] in pair:
+                i.remove(pair)
+                removed.append(("I",pair))
+            
+    elif blamed[1] == "RC":
+        for pair in rc:
+            if blamed[0] in pair:
+                rc.remove(pair)
+                removed.append(("RC",pair))
+
+    elif blamed[1] == "RF":
+        rf.remove(blamed[0])
+        removed.append(("RF",blamed[0]))
 
 def sort_names():
     global names
@@ -357,6 +421,14 @@ def get_key(value, dictionary):
             return key
     print("get_key() fnction failed; no key.")
     sys.exit(2)
+
+# moves student from main list to secondary list with less restrictions
+def relegate(pair_or_student):
+    global c, f, rc, rf
+    for lst in [[c, rc], [f, rf]]:
+        if pair_or_student in lst[0]:
+            lst[0].remove(pair_or_student)
+            lst[1].append(pair_or_student)
 
 
 def find_possible_positions():
@@ -420,11 +492,15 @@ def print_summary(start_time):
 Compatibles: {c}
 Incompatibles: {i}
 Fronts: {f}
+Relegated Compatibles: {rc}
+Relegated Fronts: {rf}
 Removed: {removed}
 
 {len(c)} Compatibles
 {len(i)} Incompatibles
 {len(f)} Fronts
+{len(rc)} Relegated Compatibles
+{len(rf)} Relegated Fronts
 {len(removed)} Removed
 Total time: {time() - start_time}
 """)
